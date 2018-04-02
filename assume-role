@@ -16,265 +16,323 @@
 #
 # END USAGE DOCUMENTATION
 
+
 echo_out() {
-  # If this is outputting to an eval statement we need to output a "echo" as well
-  if [ -z "$OUTPUT_TO_EVAL" ]; then
-    echo "$@"
-  else
-    echo "echo \"$*\";"
-  fi
+	# If this is outputting to an eval statement we need to output a "echo" as well
+	if [ -z "$OUTPUT_TO_EVAL" ]; then
+		echo "$@"
+	else
+		echo "echo \"$*\";"
+	fi
+}
+
+unassume-role(){
+
+    unset AWS_SESSION_START
+    unset AWS_SESSION_ACCESS_KEY_ID
+    unset AWS_SESSION_SECRET_ACCESS_KEY
+    unset AWS_SESSION_SESSION_TOKEN
+    unset AWS_ACCESS_KEY_ID
+    unset AWS_SECRET_ACCESS_KEY
+    unset AWS_SESSION_TOKEN
+    unset AWS_REGION
+    unset AWS_DEFAULT_REGION
+    unset AWS_ACCOUNT_ID
+    unset AWS_ACCOUNT_NAME
+    unset AWS_ACCOUNT_ROLE
+	unset AWS_SECURITY_TOKEN
+	unset AWSUME_PROFILE
+    unset GEO_ENV
+
+    echo_out "Session terminated successfully"
+
+    if [[ -n "$ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID" && -n "$ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY" ]]; then
+		export AWS_ACCESS_KEY_ID=$ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
+		export AWS_SECRET_ACCESS_KEY=$ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
+		unset ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
+		unset ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
+		echo_out "Original AWS access keys restored"
+	fi
 }
 
 assume-role(){
-  #######
-  # PRE-CONDITIONS
-  #######
+	#######
+	# PRE-CONDITIONS
+	#######
 
-  # requires jq
-  if ! hash jq 2>/dev/null; then
-    echo_out "assume-role requires 'jq' to be installed"
-    return
-  fi
+	# requires jq
+	if ! hash jq 2>/dev/null; then
+		echo_out "assume-role requires 'jq' to be installed"
+		return
+	fi
 
-  # requires aws
-  if ! hash aws 2>/dev/null; then
-    echo_out "assume-role requires 'aws' to be installed"
-    return
-  fi
+	# requires aws
+	if ! hash aws 2>/dev/null; then
+		echo_out "assume-role requires 'aws' to be installed"
+		return
+	fi
 
-  #######
-  # SCRIPT VARIABLES
-  #######
+	if [[ $1 =~ .+:.+ && -z "$(awsume -v)" ]]; then
+		echo_out "assume-role requires 'awsume' to be installed when using the parent:child account name syntax"
+		return
+	fi
 
-  # exports
-  export AWS_SESSION_START
-  export AWS_SESSION_ACCESS_KEY_ID
-  export AWS_SESSION_SECRET_ACCESS_KEY
-  export AWS_SESSION_SESSION_TOKEN
-  export AWS_ACCESS_KEY_ID
-  export AWS_SECRET_ACCESS_KEY
-  export AWS_SESSION_TOKEN
-  export AWS_REGION
-  export AWS_DEFAULT_REGION
-  export AWS_ACCOUNT_ID
-  export AWS_ACCOUNT_NAME
-  export AWS_ACCOUNT_ROLE
-  export GEO_ENV
+	#######
+	# SCRIPT VARIABLES
+	#######
 
-  # INPUTS
-  account_name_input=$1
-  role_input=$2
-  mfa_token_input=$3
-  aws_region_input=$4
+	# exports
+	export AWS_SESSION_START
+	export AWS_SESSION_ACCESS_KEY_ID
+	export AWS_SESSION_SECRET_ACCESS_KEY
+	export AWS_SESSION_SESSION_TOKEN
+	export AWS_ACCESS_KEY_ID
+	export AWS_SECRET_ACCESS_KEY
+	export AWS_SESSION_TOKEN
+	export AWS_REGION
+	export AWS_DEFAULT_REGION
+	export AWS_ACCOUNT_ID
+	export AWS_ACCOUNT_NAME
+	export AWS_ACCOUNT_ROLE
+	export GEO_ENV
 
-  # DEFAULT VARIABLES
-  ACCOUNTS_FILE=${ACCOUNTS_FILE:-~/.aws/accounts}
-  SESSION_TIMEOUT=43200
-  ROLE_SESSION_TIMEOUT=3600
+	# INPUTS
+	account_name_input=$1
+	role_input=$2
+	mfa_token_input=$3
+	aws_region_input=$4
 
-  # Force use of ~/.aws/credentials file which contains aws login account
-  unset AWS_ACCESS_KEY_ID
-  unset AWS_SECRET_ACCESS_KEY
-  unset AWS_SESSION_TOKEN
+	if [[ $account_name_input =~ .+:.+ ]]; then
+		parent_account_name="$(echo ${account_name_input} | cut -d ':' -f 1)"
+		account_name_input="$(echo ${account_name_input} | cut -d ':' -f 2)"
 
-  #######
-  # SETUP
-  #######
+		# source awsume for it to apply to current shell
+		. awsume $parent_account_name &> /dev/null
+		if [ $? -eq 0 ]; then
+			echo_out "Switched to parent account '${parent_account_name}'"
+		fi
+	fi
 
-  # set account_name
-  if [ -z "$account_name_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
-    echo -n "Assume Into Account [default]:"
-    read -r account_name
-    # default
-    account_name=${account_name:-"default"}
-  else
-    account_name="$account_name_input"
-  fi
+	# DEFAULT VARIABLES
+	ACCOUNTS_FILE=${ACCOUNTS_FILE:-~/.aws/accounts}
+	SESSION_TIMEOUT=43200
+	ROLE_SESSION_TIMEOUT=3600
 
-  # set account_id
-  if [ -f "$ACCOUNTS_FILE" ]; then
-    account_id=$(jq ".[\"$account_name\"]" < "$ACCOUNTS_FILE" | jq --raw-output "select(. != null)")
-  fi
+	if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+		export ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+		export ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+	fi
 
-  # If cant find the alias then set the input as the account id
-  if [ -z "$account_id" ]; then
-    account_id=$account_name
-  fi
+	# clear previous session token
+	unset AWS_SESSION_TOKEN
 
-  # Validate Account ID
-  if [[ ! $account_id =~ ^[0-9]{12}$ ]]; then
-    echo_out "account_id \"$account_id\" is incorrectly formatted AWS account id"
-    return
-  fi
+	#######
+	# SETUP
+	#######
 
-  # set role
-  if [ -z "$role_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
-    echo -n "Assume Into Role [read]: "
-    read -r role
-    role=${role:-"read"}
-  else
-    role="$role_input"
-  fi
+	# set account_name
+	if [ -z "$account_name_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
+		echo -n "Assume Into Account [default]:"
+		read -r account_name
+		# default
+		account_name=${account_name:-"default"}
+	else
+		account_name="$account_name_input"
+	fi
 
-  if [ -z "$role" ]; then
-    echo_out "role not defined"
-    return
-  fi
+	# set account_id
+	if [ -f "$ACCOUNTS_FILE" ]; then
+		account_id=$(jq ".[\"$account_name\"]" < "$ACCOUNTS_FILE" | jq --raw-output "select(. != null)")
+	fi
 
-  # set region
-  AWS_CONFIG_REGION="$(aws configure get region)"
-  if [ -z "$aws_region_input" ] && [ -z "$AWS_REGION" ] && [ -z "$AWS_DEFAULT_REGION" ] && [ -z "$AWS_CONFIG_REGION" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
-    echo -n "Assume Into Region [us-east-1]: "
-    read -r region
-    region=${region:-"us-east-1"}
-  elif [ ! -z "$aws_region_input" ]; then
-    # if there is a $aws_region_input then set to $aws_region_input
-    region="$aws_region_input"
-  elif [ ! -z "$AWS_REGION" ]; then
-    # if there is a $AWS_REGION then set to $AWS_REGION
-    region="$AWS_REGION"
-  elif [ ! -z "$AWS_DEFAULT_REGION" ]; then
-    # if there is a $AWS_DEFAULT_REGION then set to $AWS_DEFAULT_REGION
-    region="$AWS_DEFAULT_REGION"
-  elif [ ! -z "$AWS_CONFIG_REGION" ]; then
-    region=$AWS_CONFIG_REGION
-  fi
+	# If cant find the alias then set the input as the account id
+	if [ -z "$account_id" ]; then
+		account_id=$account_name
+	fi
 
-  if [ -z "$region" ]; then
-    echo_out "region not defined"
-    return
-  fi
+	# Validate Account ID
+	if [[ ! $account_id =~ ^[0-9]{12}$ ]]; then
+		echo_out "account_id \"$account_id\" is incorrectly formatted AWS account id"
+		unassume-role
+		return
+	fi
 
-  AWS_REGION="$region"
-  AWS_DEFAULT_REGION="$region"
+	# set role
+	if [ -z "$role_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
+		echo -n "Assume Into Role [read]: "
+		read -r role
+		role=${role:-"read"}
+	else
+		role="$role_input"
+	fi
 
-  # Activate our session
-  NOW=$(date +"%s")
-  if [ -z "$AWS_SESSION_START" ]; then
-    AWS_SESSION_START=0
-  fi
+	if [ -z "$role" ]; then
+		echo_out "role not defined"
+		return
+	fi
 
-  ABOUT_SESSION_TIMEOUT=$((SESSION_TIMEOUT - 200))
-  SESSION_TIMEOUT_DELTA=$((NOW - AWS_SESSION_START))
+	# set region
+	AWS_CONFIG_REGION="$(aws configure get region)"
+	if [ -z "$aws_region_input" ] && [ -z "$AWS_REGION" ] && [ -z "$AWS_DEFAULT_REGION" ] && [ -z "$AWS_CONFIG_REGION" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
+		echo -n "Assume Into Region [us-east-1]: "
+		read -r region
+		region=${region:-"us-east-1"}
+	elif [ ! -z "$aws_region_input" ]; then
+		# if there is a $aws_region_input then set to $aws_region_input
+		region="$aws_region_input"
+	elif [ ! -z "$AWS_REGION" ]; then
+		# if there is a $AWS_REGION then set to $AWS_REGION
+		region="$AWS_REGION"
+	elif [ ! -z "$AWS_DEFAULT_REGION" ]; then
+		# if there is a $AWS_DEFAULT_REGION then set to $AWS_DEFAULT_REGION
+		region="$AWS_DEFAULT_REGION"
+	elif [ ! -z "$AWS_CONFIG_REGION" ]; then
+		region=$AWS_CONFIG_REGION
+	fi
 
-  # if session doesn't exist, or is expired
-  if [ "$ABOUT_SESSION_TIMEOUT" -lt "$SESSION_TIMEOUT_DELTA" ]; then
-    # We'll need a token to renew session
-    if [ -z "$mfa_token_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
-      echo -n "MFA Token: "
-      read -r -s mfa_token
-    else
-      mfa_token="$mfa_token_input"
-    fi
+	if [ -z "$region" ]; then
+		echo_out "region not defined"
+		unassume-role
+		return
+	fi
 
-    if [ -z "$mfa_token" ]; then
-      echo_out "mfa_token is not defined"
-      return
-    fi
+	AWS_REGION="$region"
+	AWS_DEFAULT_REGION="$region"
 
-    # get the username attached to your default creds
-    AWS_USERNAME=$(aws iam get-user --query User.UserName --output text)
+	# Activate our session
+	NOW=$(date +"%s")
+	if [ -z "$AWS_SESSION_START" ]; then
+		AWS_SESSION_START=0
+	fi
 
-    # get MFA device attached to default creds
-    MFA_DEVICE_ARGS=(--user-name $AWS_USERNAME)
-    MFA_DEVICE_ARGS+=(--query 'MFADevices[0].SerialNumber')
-    MFA_DEVICE_ARGS+=(--output text)
-    MFA_DEVICE=$(aws iam list-mfa-devices "${MFA_DEVICE_ARGS[@]}")
-    MFA_DEVICE_STATUS=$?
+	ABOUT_SESSION_TIMEOUT=$((SESSION_TIMEOUT - 200))
+	SESSION_TIMEOUT_DELTA=$((NOW - AWS_SESSION_START))
 
-    if [ $MFA_DEVICE_STATUS -ne 0 ]; then
-      echo_out "aws iam list-mfa-devices error"
-      return
-    fi
+	# if session doesn't exist, or is expired
+	if [ "$ABOUT_SESSION_TIMEOUT" -lt "$SESSION_TIMEOUT_DELTA" ]; then
+		# We'll need a token to renew session
+		if [ -z "$mfa_token_input" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
+			echo -n "MFA Token: "
+			read -r -s mfa_token
+			echo ""
+		else
+			mfa_token="$mfa_token_input"
+		fi
 
-    # 12 hour MFA w/ Session Token, which can then be reused
-    SESSION_ARGS=(--duration-seconds $SESSION_TIMEOUT)
-    SESSION_ARGS+=(--serial-number ${MFA_DEVICE})
-    SESSION_ARGS+=(--token-code ${mfa_token})
-    SESSION=$(aws sts get-session-token "${SESSION_ARGS[@]}")
-    SESSION_STATUS=$?
+		if [ -z "$mfa_token" ]; then
+			echo_out "mfa_token is not defined"
+			unassume-role
+			return
+		fi
 
-    if [ $SESSION_STATUS -ne 0 ]; then
-      echo_out "aws sts get-session-token error"
-      return
-    fi
+		# get the username attached to your default creds
+		AWS_USERNAME=$(aws iam get-user --query User.UserName --output text)
 
-    # Save Primary Credentials
-    AWS_SESSION_START=$NOW
-    AWS_SESSION_ACCESS_KEY_ID=$(echo "$SESSION" | jq -r .Credentials.AccessKeyId)
-    AWS_SESSION_SECRET_ACCESS_KEY=$(echo "$SESSION" | jq -r .Credentials.SecretAccessKey)
-    AWS_SESSION_SESSION_TOKEN=$(echo "$SESSION" | jq -r .Credentials.SessionToken)
-  fi
+		# get MFA device attached to default creds
+		MFA_DEVICE_ARGS=(--user-name $AWS_USERNAME)
+		MFA_DEVICE_ARGS+=(--query 'MFADevices[0].SerialNumber')
+		MFA_DEVICE_ARGS+=(--output text)
+		MFA_DEVICE=$(aws iam list-mfa-devices "${MFA_DEVICE_ARGS[@]}")
+		MFA_DEVICE_STATUS=$?
 
-  # Use the Session in the login account
-  export AWS_ACCESS_KEY_ID=$AWS_SESSION_ACCESS_KEY_ID
-  export AWS_SECRET_ACCESS_KEY=$AWS_SESSION_SECRET_ACCESS_KEY
-  export AWS_SESSION_TOKEN=$AWS_SESSION_SESSION_TOKEN
+		if [ $MFA_DEVICE_STATUS -ne 0 ]; then
+			echo_out "aws iam list-mfa-devices error"
+			unassume-role
+			return
+		fi
 
-  # Now drop into a role using session token's long-lived MFA
-  ROLE_SESSION_ARGS=(--role-arn arn:aws:iam::${account_id}:role/${role})
-  ROLE_SESSION_ARGS+=(--external-id ${account_id})
-  ROLE_SESSION_ARGS+=(--duration-seconds ${ROLE_SESSION_TIMEOUT})
-  ROLE_SESSION_ARGS+=(--role-session-name $(date +%s))
-  ROLE_SESSION=$(aws sts assume-role "${ROLE_SESSION_ARGS[@]}" || echo "fail")
+		# 12 hour MFA w/ Session Token, which can then be reused
+		SESSION_ARGS=(--duration-seconds $SESSION_TIMEOUT)
+		SESSION_ARGS+=(--serial-number ${MFA_DEVICE})
+		SESSION_ARGS+=(--token-code ${mfa_token})
+		SESSION=$(aws sts get-session-token "${SESSION_ARGS[@]}")
+		SESSION_STATUS=$?
 
-  if [ "$ROLE_SESSION" = "fail" ]; then
-     echo_out "Failed to export session envars."
-     # This will force a new session next time assume-role is run
-     unset AWS_SESSION_START
-  else
-    AWS_ACCESS_KEY_ID=$(echo "$ROLE_SESSION" | jq -r .Credentials.AccessKeyId)
-    AWS_SECRET_ACCESS_KEY=$(echo "$ROLE_SESSION" | jq -r .Credentials.SecretAccessKey)
-    AWS_SESSION_TOKEN=$(echo "$ROLE_SESSION" | jq -r .Credentials.SessionToken)
-    AWS_ACCOUNT_ID="$account_id"
-    AWS_ACCOUNT_NAME="$account_name"
-    AWS_ACCOUNT_ROLE="$role"
-    GEO_ENV="$account_name" # For GeoEngineer https://github.com/coinbase/geoengineer
-    echo_out "Success! IAM session envars are exported."
-  fi
+		if [ $SESSION_STATUS -ne 0 ]; then
+			echo_out "aws sts get-session-token error"
+			unassume-role
+			return
+		fi
 
-  # OUTPUTS ALL THE EXPORTS for eval $(assume-role [args])
-  if [ "$OUTPUT_TO_EVAL" = "true" ]; then
-    echo "export AWS_REGION=\"$AWS_REGION\";"
-    echo "export AWS_DEFAULT_REGION=\"$AWS_DEFAULT_REGION\";"
-    echo "export AWS_ACCESS_KEY_ID=\"$AWS_ACCESS_KEY_ID\";"
-    echo "export AWS_SECRET_ACCESS_KEY=\"$AWS_SECRET_ACCESS_KEY\";"
-    echo "export AWS_SESSION_TOKEN=\"$AWS_SESSION_TOKEN\";"
-    echo "export AWS_ACCOUNT_ID=\"$AWS_ACCOUNT_ID\";"
-    echo "export AWS_ACCOUNT_NAME=\"$AWS_ACCOUNT_NAME\";"
-    echo "export AWS_SESSION_ACCESS_KEY_ID=\"$AWS_SESSION_ACCESS_KEY_ID\";"
-    echo "export AWS_SESSION_SECRET_ACCESS_KEY=\"$AWS_SESSION_SECRET_ACCESS_KEY\";"
-    echo "export AWS_SESSION_SESSION_TOKEN=\"$AWS_SESSION_SESSION_TOKEN\";"
-    echo "export AWS_SESSION_START=\"$AWS_SESSION_START\";"
-    echo "export GEO_ENV=\"$GEO_ENV\";"
-  fi
+		# Save Primary Credentials
+		AWS_SESSION_START=$NOW
+		AWS_SESSION_ACCESS_KEY_ID=$(echo "$SESSION" | jq -r .Credentials.AccessKeyId)
+		AWS_SESSION_SECRET_ACCESS_KEY=$(echo "$SESSION" | jq -r .Credentials.SecretAccessKey)
+		AWS_SESSION_SESSION_TOKEN=$(echo "$SESSION" | jq -r .Credentials.SessionToken)
+	fi
 
-  # USED FOR TESTING AND DEBUGGING
-  if [ "$DEBUG_ASSUME_ROLE" = "true" ]; then
-    echo "AWS_CONFIG_REGION=\"$AWS_CONFIG_REGION\";"
-    echo "AWS_USERNAME=\"$AWS_USERNAME\";"
-    echo "MFA_DEVICE_ARGS=\"${MFA_DEVICE_ARGS[*]}\";"
-    echo "MFA_DEVICE=\"$MFA_DEVICE\";"
-    echo "SESSION_ARGS=\"${SESSION_ARGS[*]}\";"
-    echo "SESSION='$SESSION';"
-    echo "ROLE_SESSION_ARGS=\"${ROLE_SESSION_ARGS[*]}\";"
-    echo "ROLE_SESSION='$ROLE_SESSION';"
-  fi
+	# Use the Session in the login account
+	export AWS_ACCESS_KEY_ID=$AWS_SESSION_ACCESS_KEY_ID
+	export AWS_SECRET_ACCESS_KEY=$AWS_SESSION_SECRET_ACCESS_KEY
+	export AWS_SESSION_TOKEN=$AWS_SESSION_SESSION_TOKEN
+
+	if [ "$role" ]; then
+		# Now drop into a role using session token's long-lived MFA
+		ROLE_SESSION_ARGS=(--role-arn arn:aws:iam::${account_id}:role/${role})
+		ROLE_SESSION_ARGS+=(--external-id ${account_id})
+		ROLE_SESSION_ARGS+=(--duration-seconds ${ROLE_SESSION_TIMEOUT})
+		ROLE_SESSION_ARGS+=(--role-session-name $(date +%s))
+		ROLE_SESSION=$(aws sts assume-role "${ROLE_SESSION_ARGS[@]}" || echo "fail")
+
+		if [ "$ROLE_SESSION" = "fail" ]; then
+			echo_out "Failed to export session envars."
+			# This will force a new session next time assume-role is run
+			unassume-role
+		else
+			AWS_ACCESS_KEY_ID=$(echo "$ROLE_SESSION" | jq -r .Credentials.AccessKeyId)
+			AWS_SECRET_ACCESS_KEY=$(echo "$ROLE_SESSION" | jq -r .Credentials.SecretAccessKey)
+			AWS_SESSION_TOKEN=$(echo "$ROLE_SESSION" | jq -r .Credentials.SessionToken)
+			AWS_ACCOUNT_ID="$account_id"
+			AWS_ACCOUNT_NAME="$account_name"
+			AWS_ACCOUNT_ROLE="$role"
+			GEO_ENV="$account_name" # For GeoEngineer https://github.com/coinbase/geoengineer
+			echo_out "Success! IAM session envars are exported."
+		fi
+	fi
+
+	# OUTPUTS ALL THE EXPORTS for eval $(assume-role [args])
+	if [ "$OUTPUT_TO_EVAL" = "true" ]; then
+		echo "export AWS_REGION=\"$AWS_REGION\";"
+		echo "export AWS_DEFAULT_REGION=\"$AWS_DEFAULT_REGION\";"
+		echo "export AWS_ACCESS_KEY_ID=\"$AWS_ACCESS_KEY_ID\";"
+		echo "export AWS_SECRET_ACCESS_KEY=\"$AWS_SECRET_ACCESS_KEY\";"
+		echo "export AWS_SESSION_TOKEN=\"$AWS_SESSION_TOKEN\";"
+		echo "export AWS_ACCOUNT_ID=\"$AWS_ACCOUNT_ID\";"
+		echo "export AWS_ACCOUNT_NAME=\"$AWS_ACCOUNT_NAME\";"
+		echo "export AWS_SESSION_ACCESS_KEY_ID=\"$AWS_SESSION_ACCESS_KEY_ID\";"
+		echo "export AWS_SESSION_SECRET_ACCESS_KEY=\"$AWS_SESSION_SECRET_ACCESS_KEY\";"
+		echo "export AWS_SESSION_SESSION_TOKEN=\"$AWS_SESSION_SESSION_TOKEN\";"
+		echo "export AWS_SESSION_START=\"$AWS_SESSION_START\";"
+		echo "export GEO_ENV=\"$GEO_ENV\";"
+	fi
+
+	# USED FOR TESTING AND DEBUGGING
+	if [ "$DEBUG_ASSUME_ROLE" = "true" ]; then
+		echo "AWS_CONFIG_REGION=\"$AWS_CONFIG_REGION\";"
+		echo "AWS_USERNAME=\"$AWS_USERNAME\";"
+		echo "MFA_DEVICE_ARGS=\"${MFA_DEVICE_ARGS[*]}\";"
+		echo "MFA_DEVICE=\"$MFA_DEVICE\";"
+		echo "SESSION_ARGS=\"${SESSION_ARGS[*]}\";"
+		echo "SESSION='$SESSION';"
+		echo "ROLE_SESSION_ARGS=\"${ROLE_SESSION_ARGS[*]}\";"
+		echo "ROLE_SESSION='$ROLE_SESSION';"
+	fi
 }
 
 # from https://stackoverflow.com/questions/2683279/how-to-detect-if-a-script-is-being-sourced
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-  # If the script is being sourced, do nothing
-  # Supports `source $(which assume_role)` in rc file for bash and zsh
-  : # noop
+	# If the script is being sourced, do nothing
+	# Supports `source $(which assume_role)` in rc file for bash and zsh
+	: # noop
 elif [[ "init" == "${1}" ]]; then
-  # TODO: This will be multi-shell support like rbenv, e.g. fish
-  # Supports `eval "$(assume-role init -)"` in rc file
-  echo "Currently not supported"
+	# TODO: This will be multi-shell support like rbenv, e.g. fish
+	# Supports `eval "$(assume-role init -)"` in rc file
+	echo "Currently not supported"
 else
-  # The script is being called directly
-  # Supports calling being called like eval $(assume-role account role [token])
-  set -eo pipefail
-  OUTPUT_TO_EVAL="true"
-  assume-role "$@";
+	# The script is being called directly
+	# Supports calling being called like eval $(assume-role account role [token])
+	# set -eo pipefail
+	#OUTPUT_TO_EVAL="true"
+	#assume-role "$@";
+	: #noop
 fi
