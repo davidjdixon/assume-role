@@ -43,6 +43,7 @@ unassume-role(){
 	unset AWS_SECURITY_TOKEN
 	unset AWSUME_PROFILE
     unset GEO_ENV
+	unset OP_SESSION_travelex
 
     echo_out "Session terminated successfully"
 
