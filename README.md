@@ -13,7 +13,7 @@ Assume IAM roles through an **AWS Bastion** account with **MFA** via the command
 ### via Homebrew (macOS)
 
 ```bash
-brew tap coinbase/assume-role
+brew tap travelex/assume-role
 brew install assume-role
 ```
 
