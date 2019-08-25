@@ -330,8 +330,6 @@ assume-role-with-bastion() {
     if [ -z "$AWS_USERNAME" ]; then
       # get the username attached to your default creds
       AWS_USERNAME=$(aws iam get-user --query User.UserName --output text --profile $default_profile)
-    else
-      echo_out "Using AWS_USERNAME: $AWS_USERNAME"
     fi
 
     # get MFA device attached to default creds
