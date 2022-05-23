@@ -1,5 +1,7 @@
 # assume-role
 
+ _Originally developed by [Coinbase](https://github.com/coinbase/assume-role) (original repository archived)_.
+
 <img src="./assets/assume-role.png" align="right" alt="assume-role logo" />
 
 Assume IAM roles through an **AWS Bastion** account with **MFA** or **SAML Provider**  via the command line.
@@ -17,7 +19,7 @@ according to AWS.
 ### via Homebrew (macOS)
 
 ```bash
-brew tap travelex/assume-role
+brew tap davidjdixon/assume-role
 brew install assume-role
 ```
 
@@ -32,7 +34,7 @@ brew upgrade assume-role
 You can install/upgrade assume-role with this command:
 
 ```bash
-curl https://raw.githubusercontent.com/coinbase/assume-role/master/install-assume-role -O
+curl https://raw.githubusercontent.com/davidjdixon/assume-role/master/install-assume-role -O
 cat install-assume-role # inspect the script for security
 bash ./install-assume-role # install assume-role
 ```
@@ -62,6 +64,7 @@ assume-role [account-id] [role] [mfa-token]
 ### SAML authentication
 
 If you would like to authenticate with your SAML provider using username and password instead, add this to your `.bash_profile` or `.bashrc`:
+
 ```
 export AWS_ASSUME_ROLE_AUTH_SCHEME=saml # defaults to bastion
 export SAML_IDP_ASSERTION_URL="your saml idp assertion url"
@@ -82,6 +85,7 @@ The script will warn you if you are not serving over SSL.
 Once you assume-role, you will be prompted for your SAML credentials (username and password).
 
 If you would like to store your credentials on the filesystem for ease of use, you can create a `~/.saml/credentials` file that looks as such:
+
 ```
 username = lukeskywalker
 password = hunter2
@@ -111,14 +115,14 @@ Also, by setting `$AWS_PROFILE_ASSUME_ROLE`, you can define a default profile fo
 default accounts for `assume-role` and vanilla `awscli` or simply to have better names than `default`:
 
 ```bash
-$ export AWS_PROFILE_ASSUME_ROLE="bastion"
-$ assume-role production read
+export AWS_PROFILE_ASSUME_ROLE="bastion"
+assume-role production read
 ```
 
 Moreover, if you are in the need of [longer client-side assume-role sessions](https://aws.amazon.com/about-aws/whats-new/2018/03/longer-role-sessions/) and don't want to [enter your MFA authentication every hour (default)](https://github.com/coinbase/assume-role/issues/19) this one is for you:
 
 ```bash
-$ export AWS_ROLE_SESSION_TIMEOUT=43200
+export AWS_ROLE_SESSION_TIMEOUT=43200
 ```
 
 However, be aware that for [chained roles](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_terms-and-concepts.html#iam-term-role-chaining) there's currently a forced **1 hour limit** from AWS. You'll get the following error if you exceed that specific limit:
@@ -126,8 +130,9 @@ However, be aware that for [chained roles](https://docs.aws.amazon.com/IAM/lates
 > DurationSeconds exceeds the 1 hour session limit for roles assumed by role chaining.
 
 You can also override the AWS IAM username which is usually fetched from the AWS IAM get-user api. This might not be allowed in some environments though:
+
 ```bash
-$ export AWS_USERNAME=my_username
+export AWS_USERNAME=my_username
 ```
 
 ## AWS Bastion Account Setup
