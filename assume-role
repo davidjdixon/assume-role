@@ -32,11 +32,10 @@ assume-role() {
   setup "$@" || (unassume-role && return 1)
 
   if [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "saml" ]]; then
-    assume-role-with-saml || (unassume-role && return 1)
+    assume-role-with-saml || return 1
   elif [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "bastion" ]]; then
-    assume-role-with-bastion || (unassume-role && return 1)
+    assume-role-with-bastion || return 1
   else
-    unassume-role
     return 1
   fi
 
@@ -352,7 +351,12 @@ assume-role-with-bastion() {
     SESSION_ARGS+=(--profile "${default_profile}")
     SESSION_ARGS+=(--output json)
 
-    SESSION=$(aws sts get-session-token "${SESSION_ARGS[@]}")
+    SESSION=$(aws sts get-session-token "${SESSION_ARGS[@]}" 2>&1)
+
+    if [[ "${SESSION}" == *"MultiFactorAuthentication failed with invalid MFA one time pass code"* ]]; then
+      echo "MFA code invalid - perhaps reused too quickly?"
+      return 1
+    fi
 
     SESSION_STATUS=$?
 
