@@ -24,7 +24,7 @@ echo_out() {
     echo "$@"
   else
     # shellcheck disable=SC2048,SC2086
-    echo $* >> /dev/stderr
+    echo $* >>/dev/stderr
   fi
 }
 
@@ -50,29 +50,26 @@ unassume-role() {
   unset AWS_SESSION_ACCESS_KEY_ID
   unset AWS_SESSION_SECRET_ACCESS_KEY
   unset AWS_SESSION_SESSION_TOKEN
-  unset AWS_SESSION_SECURITY_TOKEN
   unset AWS_ACCESS_KEY_ID
   unset AWS_SECRET_ACCESS_KEY
   unset AWS_SESSION_TOKEN
-  unset AWS_SECURITY_TOKEN
   unset AWS_REGION
   unset AWS_DEFAULT_REGION
   unset AWS_ACCOUNT_ID
   unset AWS_ACCOUNT_NAME
   unset AWS_ACCOUNT_ROLE
-  unset GEO_ENV
   unset AWS_PROFILE_ASSUME_ROLE
   unset AWSUME_PROFILE
 
   echo_out "Session terminated successfully"
 
   if [[ -n "$ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID" && -n "$ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY" ]]; then
-		export AWS_ACCESS_KEY_ID=$ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
-		export AWS_SECRET_ACCESS_KEY=$ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
-		unset ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
-		unset ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
-		echo_out "Original AWS access keys restored"
-	fi
+    export AWS_ACCESS_KEY_ID=$ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
+    export AWS_SECRET_ACCESS_KEY=$ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
+    unset ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID
+    unset ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY
+    echo_out "Original AWS access keys restored"
+  fi
 }
 
 setup() {
@@ -93,9 +90,9 @@ setup() {
   fi
 
   if [[ $1 =~ .+:.+ && -z "$(awsume -v)" ]]; then
-		echo_out "assume-role requires 'awsume' to be installed when using the parent:child account name syntax"
-		return
-	fi
+    echo_out "assume-role requires 'awsume' to be installed when using the parent:child account name syntax"
+    return
+  fi
 
   #######
   # SCRIPT VARIABLES
@@ -106,17 +103,14 @@ setup() {
   export AWS_SESSION_ACCESS_KEY_ID
   export AWS_SESSION_SECRET_ACCESS_KEY
   export AWS_SESSION_SESSION_TOKEN
-  export AWS_SESSION_SECURITY_TOKEN
   export AWS_ACCESS_KEY_ID
   export AWS_SECRET_ACCESS_KEY
   export AWS_SESSION_TOKEN
-  export AWS_SECURITY_TOKEN
   export AWS_REGION
   export AWS_DEFAULT_REGION
   export AWS_ACCOUNT_ID
   export AWS_ACCOUNT_NAME
   export AWS_ACCOUNT_ROLE
-  export GEO_ENV
   export AWS_PROFILE_ASSUME_ROLE
 
   # INPUTS
@@ -132,15 +126,15 @@ setup() {
   fi
 
   if [[ $account_name_input =~ .+:.+ ]]; then
-		parent_account_name="$(echo ${account_name_input} | cut -d ':' -f 1)"
-		account_name_input="$(echo ${account_name_input} | cut -d ':' -f 2)"
+    parent_account_name="$(echo "${account_name_input}" | cut -d ':' -f 1)"
+    account_name_input="$(echo "${account_name_input}" | cut -d ':' -f 2)"
 
-		# source awsume for it to apply to current shell
-		. awsume $parent_account_name &> /dev/null
-		if [ $? -eq 0 ]; then
-			echo_out "Switched to parent account '${parent_account_name}'"
-		fi
-	fi
+    # source awsume for it to apply to current shell
+    . awsume "$parent_account_name" &>/dev/null
+    if [ $? -eq 0 ]; then
+      echo_out "Switched to parent account '${parent_account_name}'"
+    fi
+  fi
 
   # DEFAULT VARIABLES
   ACCOUNTS_FILE=${ACCOUNTS_FILE:-~/.aws/accounts}
@@ -154,15 +148,14 @@ setup() {
   fi
 
   if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
-		export ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-		export ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-	fi
+    export ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    export ASSUMEROLE_PARENT_AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+  fi
 
   # Force use of ~/.aws/credentials file which contains aws login account
   unset AWS_ACCESS_KEY_ID
   unset AWS_SECRET_ACCESS_KEY
   unset AWS_SESSION_TOKEN
-  unset AWS_SECURITY_TOKEN
 
   #######
   # SETUP
@@ -193,7 +186,7 @@ setup() {
 
   # set account_id
   if [ -f "$ACCOUNTS_FILE" ]; then
-    account_id=$(jq ".[\"$account_name\"]" < "$ACCOUNTS_FILE" | jq --raw-output "select(. != null)")
+    account_id=$(jq ".[\"$account_name\"]" <"$ACCOUNTS_FILE" | jq --raw-output "select(. != null)")
   fi
 
   # If cant find the alias then set the input as the account id
@@ -256,7 +249,7 @@ assume-role-with-saml() {
   fi
 
   echo_out "Gathering SAML credentials..."
-  if [ -n "$OUTPUT_TO_EVAL" ] && { [ -z "$saml_user" ] || [ -z "$saml_password" ] ;}; then
+  if [ -n "$OUTPUT_TO_EVAL" ] && { [ -z "$saml_user" ] || [ -z "$saml_password" ]; }; then
     echo_out "assume-role-with-saml only supports eval if used with $SAML_FILE for credentials"
     unset saml_password
     return 1
@@ -370,14 +363,12 @@ assume-role-with-bastion() {
     AWS_SESSION_ACCESS_KEY_ID=$(echo "$SESSION" | jq -r .Credentials.AccessKeyId)
     AWS_SESSION_SECRET_ACCESS_KEY=$(echo "$SESSION" | jq -r .Credentials.SecretAccessKey)
     AWS_SESSION_SESSION_TOKEN=$(echo "$SESSION" | jq -r .Credentials.SessionToken)
-    AWS_SESSION_SECURITY_TOKEN=$AWS_SESSION_SESSION_TOKEN
   fi
 
   # Use the Session in the login account
   export AWS_ACCESS_KEY_ID=$AWS_SESSION_ACCESS_KEY_ID
   export AWS_SECRET_ACCESS_KEY=$AWS_SESSION_SECRET_ACCESS_KEY
   export AWS_SESSION_TOKEN=$AWS_SESSION_SESSION_TOKEN
-  export AWS_SECURITY_TOKEN=$AWS_SESSION_SECURITY_TOKEN
 
   ROLE_SESSION_START=$NOW
 
@@ -392,9 +383,9 @@ assume-role-with-bastion() {
 
 export-envars() {
   if [ "$ROLE_SESSION" = "fail" ]; then
-     echo_out "Failed to export session envars."
-     # This will force a new session next time assume-role is run
-     return 1
+    echo_out "Failed to export session envars."
+    # This will force a new session next time assume-role is run
+    return 1
   else
     AWS_ACCESS_KEY_ID=$(echo "$ROLE_SESSION" | jq -r .Credentials.AccessKeyId)
     AWS_SECRET_ACCESS_KEY=$(echo "$ROLE_SESSION" | jq -r .Credentials.SecretAccessKey)
@@ -402,12 +393,10 @@ export-envars() {
     export AWS_ACCESS_KEY_ID
     export AWS_SECRET_ACCESS_KEY
     export AWS_SESSION_TOKEN
-    export AWS_SECURITY_TOKEN=$AWS_SESSION_TOKEN
     export AWS_ACCOUNT_ID="$account_id"
     export AWS_ACCOUNT_NAME="$account_name"
     export AWS_ACCOUNT_ROLE="$role"
     export ROLE_SESSION_START="$ROLE_SESSION_START"
-    export GEO_ENV="$account_name" # For GeoEngineer https://github.com/coinbase/geoengineer
     echo_out "Success! IAM session envars are exported."
   fi
 
@@ -424,11 +413,8 @@ export-envars() {
     echo "export AWS_SESSION_ACCESS_KEY_ID=\"$AWS_SESSION_ACCESS_KEY_ID\";"
     echo "export AWS_SESSION_SECRET_ACCESS_KEY=\"$AWS_SESSION_SECRET_ACCESS_KEY\";"
     echo "export AWS_SESSION_SESSION_TOKEN=\"$AWS_SESSION_SESSION_TOKEN\";"
-    echo "export AWS_SESSION_SECURITY_TOKEN=\"$AWS_SESSION_SESSION_TOKEN\";"
     echo "export AWS_SESSION_START=\"$AWS_SESSION_START\";"
-    echo "export GEO_ENV=\"$GEO_ENV\";"
     echo "export AWS_PROFILE_ASSUME_ROLE=\"$AWS_PROFILE_ASSUME_ROLE\";"
-    echo "export AWS_SECURITY_TOKEN=\"$AWS_SESSION_TOKEN\";"
   fi
 }
 
@@ -477,5 +463,5 @@ else
   # Supports calling being called like eval $(assume-role account role [token])
   set -eo pipefail
   OUTPUT_TO_EVAL="true"
-  assume-role "$@";
+  assume-role "$@"
 fi

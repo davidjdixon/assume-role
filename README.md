@@ -8,9 +8,7 @@ Assume IAM roles through an **AWS Bastion** account with **MFA** or **SAML Provi
 
 **AWS Bastion** accounts store only IAM users providing a central, isolated account to manage their credentials and access. Trusting AWS accounts create IAM roles that the Bastion users can assume, to allow a single user access to multiple accounts resources. Under this setup, `assume-role` makes it easier to follow the standard security practices of MFA and short lived credentials.
 
-**SAML Providers** allow you to use federated login to assume-role-with-saml. SAML Assertions should be
-[formatted as following](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_saml_assertions.html)
-according to AWS.
+**SAML Providers** allow you to use federated login to assume-role-with-saml. SAML Assertions should be [formatted as following](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_saml_assertions.html) according to AWS.
 
 ## Installation
 
