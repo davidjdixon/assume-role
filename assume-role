@@ -12,7 +12,6 @@
 # role                  the role to assume into the account
 #                       [default 'read']
 # mfa_token             The MFA token for the user
-#                       only valid if not using SAML for auth
 #
 # aws_region            region to assume into default set in ~/.aws/config
 #
@@ -31,8 +30,8 @@ echo_out() {
 assume-role() {
   setup "$@" || (unassume-role && return 1)
 
-  if [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "saml" ]]; then
-    assume-role-with-saml || return 1
+  if [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "no-bastion" ]] || [[ -n "$NO_BASTION" ]]; then
+    assume-role-no-bastion || return 1
   elif [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "bastion" ]]; then
     assume-role-with-bastion || return 1
   else
@@ -114,16 +113,10 @@ setup() {
   export AWS_PROFILE_ASSUME_ROLE
 
   # INPUTS
-  if [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "saml" ]]; then
-    account_name_input=$1
-    role_input=$2
-    aws_region_input=$3
-  else
-    account_name_input=$1
-    role_input=$2
-    mfa_token_input=$3
-    aws_region_input=$4
-  fi
+  account_name_input=$1
+  role_input=$2
+  mfa_token_input=$3
+  aws_region_input=$4
 
   if [[ $account_name_input =~ .+:.+ ]]; then
     parent_account_name="$(echo "${account_name_input}" | cut -d ':' -f 1)"
@@ -138,14 +131,9 @@ setup() {
 
   # DEFAULT VARIABLES
   ACCOUNTS_FILE=${ACCOUNTS_FILE:-~/.aws/accounts}
-  SAML_FILE=${SAML_FILE:-~/.saml/credentials}
   SESSION_TIMEOUT=43200
-  ROLE_SESSION_TIMEOUT=3600
+  ROLE_SESSION_TIMEOUT=${TIMEOUT:-3600}
   AWS_ASSUME_ROLE_AUTH_SCHEME=${AWS_ASSUME_ROLE_AUTH_SCHEME:-bastion}
-
-  if [[ $AWS_ASSUME_ROLE_AUTH_SCHEME == "saml" ]] && ! echo "$SAML_IDP_ASSERTION_URL" | grep -q "^https"; then
-    echo_out "[WARNING] - Using non-https url ($SAML_IDP_ASSERTION_URL) for SAML authentication. Your credentials may be sent via plaintext."
-  fi
 
   if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
     export ASSUMEROLE_PARENT_AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
@@ -242,54 +230,66 @@ setup() {
   AWS_DEFAULT_REGION="$region"
 }
 
-assume-role-with-saml() {
-  if [ -f "$SAML_FILE" ]; then
-    saml_user=$(sed -nE 's/username = (.+)/\1/gp' "$SAML_FILE")
-    saml_password=$(sed -nE 's/password = (.+)/\1/gp' "$SAML_FILE")
-  fi
-
-  echo_out "Gathering SAML credentials..."
-  if [ -n "$OUTPUT_TO_EVAL" ] && { [ -z "$saml_user" ] || [ -z "$saml_password" ]; }; then
-    echo_out "assume-role-with-saml only supports eval if used with $SAML_FILE for credentials"
-    unset saml_password
-    return 1
-  fi
-
-  if [ -z "$saml_user" ]; then
-    echo_out -n "Username: "
-    read -r saml_user
-  fi
-
-  if [ -z "$saml_password" ]; then
-    echo_out -n "Password: "
-    read -r -s saml_password
-    echo_out
-  fi
-
-  echo_out "Authenticating with SAML provider..."
-  api_body=${SAML_IDP_REQUEST_BODY_TEMPLATE/\$saml_password/$saml_password}
-  api_body=${api_body/\$saml_user/$saml_user}
-
-  # Should be ok to post password as long as service is over SSL
-  saml_assertion_b64=$(curl -s -X POST "$SAML_IDP_ASSERTION_URL" -H "Content-Type: application/json" -d "$api_body" | jq .saml_response -r)
-
-  unset saml_password
-  unset api_body
-
-  if [ "$saml_assertion_b64" = "null" ]; then
-    echo_out "Incorrect endpoint ($SAML_IDP_ASSERTION_URL), username or password."
-    return 1
-  fi
-
+assume-role-no-bastion() {
+  # Activate our session
   NOW=$(date +"%s")
+  if [ -z "$AWS_SESSION_START" ]; then
+    AWS_SESSION_START=0
+  fi
+
+  ABOUT_SESSION_TIMEOUT=$((ROLE_SESSION_TIMEOUT - 200))
+  SESSION_TIMEOUT_DELTA=$((NOW - AWS_SESSION_START))
+
+  # if session doesn't exist, or is expired
+  if [ "$ABOUT_SESSION_TIMEOUT" -lt "$SESSION_TIMEOUT_DELTA" ]; then
+    # We'll need a token to renew session
+    if [ -z "$mfa_token_input" ]; then
+      echo_out -n "MFA Token: "
+      read -r mfa_token
+      echo
+    else
+      mfa_token="$mfa_token_input"
+    fi
+
+    if [ -z "$mfa_token" ]; then
+      echo_out "mfa_token is not defined"
+      return 1
+    fi
+
+    # check if the AWS_USERNAME has been preset
+    if [ -z "$AWS_USERNAME" ]; then
+      # get the username attached to your default creds
+      AWS_USERNAME=$(aws iam get-user --query User.UserName --output text --profile $default_profile)
+    fi
+
+    # get MFA device attached to default creds
+    MFA_DEVICE_ARGS=(--user-name "$AWS_USERNAME")
+    MFA_DEVICE_ARGS+=(--query 'MFADevices[0].SerialNumber')
+    MFA_DEVICE_ARGS+=(--output text)
+    MFA_DEVICE_ARGS+=(--profile "${default_profile}")
+    MFA_DEVICE=$(aws iam list-mfa-devices "${MFA_DEVICE_ARGS[@]}")
+    MFA_DEVICE_STATUS=$?
+
+    if [ $MFA_DEVICE_STATUS -ne 0 ]; then
+      echo_out "aws iam list-mfa-devices error"
+      return 1
+    fi
+
+  fi
+
   ROLE_SESSION_START=$NOW
 
+  # Now drop into a role using session token's long-lived MFA
   ROLE_SESSION_ARGS=(--role-arn arn:aws:iam::"${account_id}":role/"${role}")
-  ROLE_SESSION_ARGS+=(--principal-arn arn:aws:iam::"${account_id}":saml-provider/"${SAML_IDP_NAME}")
-  ROLE_SESSION_ARGS+=(--saml-assertion "$saml_assertion_b64")
   ROLE_SESSION_ARGS+=(--duration-seconds "${ROLE_SESSION_TIMEOUT}")
+  ROLE_SESSION_ARGS+=(--role-session-name "$(date +%s)")
+  ROLE_SESSION_ARGS+=(--serial-number "${MFA_DEVICE}")
+  ROLE_SESSION_ARGS+=(--token-code "${mfa_token}")
 
-  ROLE_SESSION=$(aws sts assume-role-with-saml "${ROLE_SESSION_ARGS[@]}" || return 1)
+  ROLE_SESSION=$(aws sts assume-role "${ROLE_SESSION_ARGS[@]}" || echo "fail")
+
+  echo_out "Using direct role without bastion: this is not recommended if changing roles frequently."
+  echo_out "Session duration is $((ROLE_SESSION_TIMEOUT / 3600)) hours"
 }
 
 assume-role-with-bastion() {
